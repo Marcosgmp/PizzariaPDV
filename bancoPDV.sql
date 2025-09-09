@@ -77,3 +77,35 @@ CREATE TABLE Cash_alerts (
         CHECK (status IN ('ativo', 'resolvido')) 
         DEFAULT 'ativo'
 );
+
+-- Clientes: buscar rápido por telefone (já tem UNIQUE, mas índice explícito ajuda em consultas)
+CREATE INDEX idx_customers_phone ON Customers(phone);
+
+-- Entregadores: buscar motoristas pelo status (quem está disponível)
+CREATE INDEX idx_drivers_status ON Delivery_drivers(status_driver);
+
+-- Produtos: filtrar por categoria + tamanho (ex: pizza G, bebida etc.)
+CREATE INDEX idx_products_category_size 
+    ON Products(category, size_product);
+
+-- Estoque: buscar pelo produto (ligação com estoque)
+CREATE INDEX idx_inventory_product ON Inventory(id_product);
+
+-- Pedidos: consultas frequentes por cliente e status
+CREATE INDEX idx_orders_customer ON Orders(id_customer);
+CREATE INDEX idx_orders_status ON Orders(status_order);
+
+-- Entregadores nos pedidos (relatórios de entregas por motoboy)
+CREATE INDEX idx_orders_driver ON Orders(id_driver);
+
+-- Itens do pedido: buscar por pedido e produto
+CREATE INDEX idx_order_items_order ON Order_items(id_order);
+CREATE INDEX idx_order_items_product ON Order_items(id_product);
+
+-- Pagamentos: buscar rápido por status (pendente/confirmado)
+CREATE INDEX idx_payments_status ON Payments(status_payments);
+
+-- Alertas: buscar rápido por pedido e status (ativos ou resolvidos)
+CREATE INDEX idx_alerts_order ON Cash_alerts(id_order);
+CREATE INDEX idx_alerts_status ON Cash_alerts(status);
+
