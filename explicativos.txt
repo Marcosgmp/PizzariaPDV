@@ -1,0 +1,45 @@
+ééééééééééééééé Davi se tiver perdido nos arquivos aqui segue uma cola
+
+PizzariaPDV/
+│── readme.md
+│── requirements.txt         # dependências do projeto (Flask, psycopg2, etc.)
+│── config.py                # configs globais (DB_URL, chave API etc.)
+│
+├── Database/
+│   └── bancoPDV.sql         # script do PostgreSQL
+│
+├── app.py                   # ponto de entrada do backend
+│
+├── models/                  # definição das tabelas como classes (SQLAlchemy)
+│   ├── __init__.py
+│   ├── customers.py
+│   ├── drivers.py
+│   ├── products.py
+│   ├── inventory.py
+│   ├── orders.py
+│   ├── order_items.py
+│   ├── payments.py
+│   └── cash_alerts.py
+│
+├── services/                # regras de negócio (lógica principal)
+│   ├── __init__.py
+│   ├── delivery.py          # lógica de entregas (rotas, status motoboy)
+│   ├── payments.py          # regras de pagamento
+│   ├── notifications.py     # integração com WhatsApp/Telegram/email
+│   └── reports.py           # relatórios de vendas, estoque, etc.
+│
+├── routes/                  # rotas da API (camada de apresentação)
+│   ├── __init__.py
+│   ├── customers.py         # /api/customers
+│   ├── drivers.py           # /api/drivers
+│   ├── products.py          # /api/products
+│   ├── inventory.py         # /api/inventory
+│   ├── orders.py            # /api/orders
+│   ├── payments.py          # /api/payments
+│   └── alerts.py            # /api/alerts
+│
+└── utils/                   # utilitários gerais
+    ├── __init__.py
+    ├── db.py                # conexão com PostgreSQL
+    ├── validators.py        # validações (ex: telefone, CPF, etc.)
+    └── geolocation.py       # integração com API de mapas
