@@ -1,9 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models.base import Base
+from Models.base import Base
+from config import DATABASE_URL
 
-# URL do PostgreSQL
-DATABASE_URL = "postgresql://postgres:2105mp@localhost:5432/Pizzariapdv"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

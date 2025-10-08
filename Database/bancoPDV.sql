@@ -89,6 +89,16 @@ ADD COLUMN latitude NUMERIC(9,6),
 ADD COLUMN longitude NUMERIC(9,6);
 
 
+-- Para Orders rastrear quando o pedido foi criado
+ALTER TABLE Orders
+ADD COLUMN created_at TIMESTAMP DEFAULT NOW();
+
+-- Para Payments quando o pagamento foi registrado
+ALTER TABLE Payments
+ADD COLUMN created_at TIMESTAMP DEFAULT NOW();
+
+
+
 -- Clientes: buscar rápido por telefone (já tem UNIQUE, mas índice explícito ajuda em consultas)
 CREATE INDEX idx_customers_phone ON Customers(phone);
 

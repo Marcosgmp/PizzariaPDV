@@ -17,5 +17,6 @@ class Payment(Base):
     type_payment = Column(String(20), nullable=False)
     status_payments = Column(Enum(PaymentStatus), nullable=False, default=PaymentStatus.pendente)
     payment_date = Column(TIMESTAMP, default=datetime.utcnow)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
     order = relationship("Order", back_populates="payments")

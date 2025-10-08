@@ -6,14 +6,16 @@ PizzariaPDV/
 │── config.py                # configs globais (DB_URL, chave API etc.)
 │
 ├── Database/
-│   └── bancoPDV.sql         # script do PostgreSQL
+│   ├── bancoPDV.sql         # script do PostgreSQL
+│   └── db.py                # conexão com PostgreSQL
 │
 ├── app.py                   # ponto de entrada do backend
 │
-├── models/                  # definição das tabelas como classes (SQLAlchemy)
+├── Models/                  # definição das tabelas como classes (SQLAlchemy)
+│   ├── base.py
 │   ├── __init__.py
 │   ├── customers.py
-│   ├── drivers.py
+│   ├── delivery_drivers.py
 │   ├── products.py
 │   ├── inventory.py
 │   ├── orders.py
@@ -21,14 +23,19 @@ PizzariaPDV/
 │   ├── payments.py
 │   └── cash_alerts.py
 │
-├── services/                # regras de negócio (lógica principal)
+├── Services/                # regras de negócio (lógica principal)
 │   ├── __init__.py
+│   ├── orders.py
 │   ├── delivery.py          # lógica de entregas (rotas, status motoboy)
 │   ├── payments.py          # regras de pagamento
 │   ├── notifications.py     # integração com WhatsApp/Telegram/email
-│   └── reports.py           # relatórios de vendas, estoque, etc.
+│   ├── reports.py           # relatórios de vendas, estoque, etc.
+│   ├── customers.py
+│   ├── ifood_merchant.py
+│   ├── inventory.py
+│   └── products.py
 │
-├── routes/                  # rotas da API (camada de apresentação)
+├── Routes/                  # rotas da API (camada de apresentação)
 │   ├── __init__.py
 │   ├── customers.py         # /api/customers
 │   ├── drivers.py           # /api/drivers
@@ -36,10 +43,11 @@ PizzariaPDV/
 │   ├── inventory.py         # /api/inventory
 │   ├── orders.py            # /api/orders
 │   ├── payments.py          # /api/payments
+│   ├── ifood_merchant.py
 │   └── alerts.py            # /api/alerts
+
 │
 └── utils/                   # utilitários gerais
     ├── __init__.py
-    ├── db.py                # conexão com PostgreSQL
     ├── validators.py        # validações (ex: telefone, CPF, etc.)
     └── geolocation.py       # integração com API de mapas
