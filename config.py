@@ -12,6 +12,7 @@ IFOOD_API_URL = os.getenv("IFOOD_API_URL", "https://merchant-api.ifood.com.br")
 IFOOD_CLIENT_ID = os.getenv("IFOOD_CLIENT_ID")
 IFOOD_CLIENT_SECRET = os.getenv("IFOOD_CLIENT_SECRET")
 IFOOD_MERCHANT_ID = os.getenv("IFOOD_MERCHANT_ID")
+#https://merchant-api.ifood.com.br/order/v1.0 
 
 # WhatsApp API 
 # WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")

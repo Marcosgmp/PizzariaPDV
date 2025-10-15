@@ -31,9 +31,14 @@ PizzariaPDV/
 │   ├── notifications.py     # integração com WhatsApp/Telegram/email
 │   ├── reports.py           # relatórios de vendas, estoque, etc.
 │   ├── customers.py
-│   ├── ifood_merchant.py
 │   ├── inventory.py
 │   └── products.py
+│
+├── Services/                # regras de negócio (lógica principal)
+│   ├── __init__.py
+│   ├── orders.py
+│   ├── auth.py     
+│   ├── merchant.py
 │
 ├── Routes/                  # rotas da API (camada de apresentação)
 │   ├── __init__.py
