@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importa os controllers (rotas)
-from ifood.ifood_controllers import merchant, auth
+from ifood.ifood_controllers import merchant, auth, orders
 
 # Cria a instância principal da aplicação
 app = FastAPI(
@@ -24,6 +24,7 @@ app.add_middleware(
 # Registra as rotas (controllers)
 app.include_router(merchant.router)
 app.include_router(auth.router)
+app.include_router(orders.router)
 
 
 # Rota raiz (teste rápido)
