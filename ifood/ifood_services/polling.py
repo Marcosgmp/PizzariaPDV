@@ -21,7 +21,7 @@ class PollingType(str, Enum):
 @dataclass
 class PollingConfig:
     enabled: bool = True
-    interval: int = 30
+    interval: int = 30 
     max_retries: int = 3
     retry_delay: int = 5
 
@@ -39,14 +39,15 @@ class PollingResult:
             self.timestamp = datetime.now()
 
 class IfoodPollingService:
-    """Servico centralizado de polling para iFood"""
+    """Serviço centralizado de polling para iFood - PRONTO PARA HOMOLOGAÇÃO"""
     
     def __init__(self):
         self.orders_service = IfoodOrderService()
         self.merchant_service = IfoodMerchantService()
         
+        # CONFIGURAÇÃO PARA HOMOLOGAÇÃO
         self.config = {
-            PollingType.ORDERS: PollingConfig(enabled=True, interval=30),
+            PollingType.ORDERS: PollingConfig(enabled=True, interval=30),  # ✅ 30s
             PollingType.MERCHANT_STATUS: PollingConfig(enabled=True, interval=60),
             PollingType.FULL_SYNC: PollingConfig(enabled=True, interval=300)
         }
@@ -69,62 +70,62 @@ class IfoodPollingService:
             'error': []
         }
         
-        print("iFood Polling Service inicializado")
+        print("🚀 iFood Polling Service inicializado (Pronto para homologação)")
 
     def register_callback(self, event_type: str, callback: Callable):
-        """Registra callback para eventos especificos"""
+        """Registra callbacks para eventos"""
         if event_type in self.callbacks:
             self.callbacks[event_type].append(callback)
-            print(f"Callback registrado para evento: {event_type}")
+            print(f"✅ Callback registrado: {event_type}")
         else:
-            print(f"Tipo de evento desconhecido: {event_type}")
+            print(f"⚠️  Tipo de evento desconhecido: {event_type}")
 
     def _notify_callbacks(self, event_type: str, data: Dict):
-        """Notifica todos os callbacks registrados para um evento"""
+        """Notifica callbacks registrados"""
         if event_type in self.callbacks:
             for callback in self.callbacks[event_type]:
                 try:
                     callback(data)
                 except Exception as e:
-                    print(f"Erro em callback {event_type}: {e}")
+                    print(f"❌ Erro em callback {event_type}: {e}")
 
     def start_polling(self):
-        """Inicia todos os servicos de polling"""
+        """Inicia todos os serviços de polling"""
         if self.is_running:
-            print("Polling ja esta em execucao")
+            print("⚠️  Polling já está em execução")
             return
 
         self.is_running = True
         self.stats['started_at'] = datetime.now()
         
-        print("INICIANDO SERVICOS DE POLLING iFOOD...")
+        print("🔄 INICIANDO SERVIÇOS DE POLLING iFOOD...")
         
         for poll_type, config in self.config.items():
             if config.enabled:
                 self._start_polling_thread(poll_type, config)
         
-        print("Todos os servicos de polling iniciados")
+        print("✅ Todos os serviços de polling iniciados")
         self._print_status()
 
     def stop_polling(self):
-        """Para todos os servicos de polling"""
+        """Para todos os serviços de polling"""
         if not self.is_running:
-            print("Polling nao esta em execucao")
+            print("⚠️  Polling não está em execução")
             return
 
         self.is_running = False
-        print("PARANDO SERVICOS DE POLLING...")
+        print("🛑 PARANDO SERVIÇOS DE POLLING...")
         
         for poll_type, thread in self.threads.items():
             if thread and thread.is_alive():
                 thread.join(timeout=5)
-                print(f"Polling {poll_type.value} parado")
+                print(f"✅ Polling {poll_type.value} parado")
         
         self.threads.clear()
-        print("Todos os servicos de polling parados")
+        print("✅ Todos os serviços de polling parados")
 
     def _start_polling_thread(self, poll_type: PollingType, config: PollingConfig):
-        """Inicia thread de polling para um tipo especifico"""
+        """Inicia thread de polling específica"""
         thread = threading.Thread(
             target=self._polling_worker,
             args=(poll_type, config),
@@ -134,10 +135,10 @@ class IfoodPollingService:
         
         self.threads[poll_type] = thread
         thread.start()
-        print(f"Polling {poll_type.value} iniciado (intervalo: {config.interval}s)")
+        print(f"✅ Polling {poll_type.value} iniciado (intervalo: {config.interval}s)")
 
     def _polling_worker(self, poll_type: PollingType, config: PollingConfig):
-        """Worker thread para polling continuo"""
+        """Worker thread para polling contínuo"""
         while self.is_running:
             try:
                 result = self._execute_poll(poll_type, config)
@@ -158,10 +159,11 @@ class IfoodPollingService:
                 self.last_results[poll_type] = error_result
                 self._process_failed_poll(error_result)
             
+            # INTERVALO DE 30 SEGUNDOS - CRÍTICO
             time.sleep(config.interval)
 
     def _execute_poll(self, poll_type: PollingType, config: PollingConfig) -> PollingResult:
-        """Executa o polling baseado no tipo"""
+        """Executa polling baseado no tipo"""
         retries = 0
         
         while retries <= config.max_retries:
@@ -176,38 +178,39 @@ class IfoodPollingService:
                     return PollingResult(
                         success=False,
                         type=poll_type,
-                        error=f"Tipo de polling nao implementado: {poll_type}"
+                        error=f"Tipo de polling não implementado: {poll_type}"
                     )
                     
             except Exception as e:
                 retries += 1
                 if retries <= config.max_retries:
-                    print(f"Tentativa {retries}/{config.max_retries} para {poll_type.value}")
+                    print(f"🔄 Tentativa {retries}/{config.max_retries} para {poll_type.value}")
                     time.sleep(config.retry_delay)
                 else:
                     return PollingResult(
                         success=False,
                         type=poll_type,
-                        error=f"Falha apos {retries} tentativas: {e}"
+                        error=f"Falha após {retries} tentativas: {e}"
                     )
         
-        return PollingResult(success=False, type=poll_type, error="Maximo de tentativas excedido")
+        return PollingResult(success=False, type=poll_type, error="Máximo de tentativas excedido")
 
     def _poll_orders(self) -> PollingResult:
-        """Polling especifico para pedidos"""
+        """Polling específico para pedidos - CRÍTICO"""
         try:
-            print("Polling de pedidos...")
+            print("🔄 Polling de pedidos...")
             events = self.orders_service.poll_events()
             
             new_orders = []
             for event in events:
                 if event.code == EventCode.PLC:
-                    print(f"Novo pedido detectado: {event.order_id}")
+                    print(f"🎉 NOVO PEDIDO detectado: {event.order_id}")
                     
                     order = self.orders_service.get_order_details(event.order_id)
                     if order:
                         new_orders.append(order)
                         
+                    # ACKNOWLEDGMENT INDIVIDUAL
                     self.orders_service.acknowledge_event(event.id)
             
             if new_orders:
@@ -232,9 +235,9 @@ class IfoodPollingService:
             )
 
     def _poll_merchant_status(self) -> PollingResult:
-        """Polling especifico para status do merchant"""
+        """Polling de status do merchant"""
         try:
-            print("Polling de status do merchant...")
+            print("🔄 Polling de status do merchant...")
             status = self.merchant_service.get_merchant_status()
             
             if status and status.state == MerchantState.CLOSED:
@@ -260,9 +263,9 @@ class IfoodPollingService:
             )
 
     def _poll_full_sync(self) -> PollingResult:
-        """Sincronizacao completa"""
+        """Sincronização completa"""
         try:
-            print("Sincronizacao completa...")
+            print("🔄 Sincronização completa...")
             
             orders_result = self._poll_orders()
             status_result = self._poll_merchant_status()
@@ -283,19 +286,19 @@ class IfoodPollingService:
             return PollingResult(
                 success=False,
                 type=PollingType.FULL_SYNC,
-                error=f"Erro na sincronizacao completa: {e}"
+                error=f"Erro na sincronização completa: {e}"
             )
 
     def _process_successful_poll(self, result: PollingResult):
-        """Processa resultado de polling bem-sucedido"""
-        print(f"Polling {result.type.value} bem-sucedido: {result.items_processed} itens")
+        """Processa resultado bem-sucedido"""
+        print(f"✅ Polling {result.type.value} bem-sucedido: {result.items_processed} itens")
         
         if result.data:
-            print(f"  Dados: {result.data}")
+            print(f"   📊 Dados: {result.data}")
 
     def _process_failed_poll(self, result: PollingResult):
-        """Processa resultado de polling com falha"""
-        print(f"Polling {result.type.value} falhou: {result.error}")
+        """Processa resultado com falha"""
+        print(f"❌ Polling {result.type.value} falhou: {result.error}")
         
         self._notify_callbacks('error', {
             'type': result.type.value,
@@ -304,7 +307,7 @@ class IfoodPollingService:
         })
 
     def _update_stats(self, result: PollingResult):
-        """Atualiza estatisticas de polling"""
+        """Atualiza estatísticas"""
         self.stats['total_polls'] += 1
         
         if result.success:
@@ -314,7 +317,7 @@ class IfoodPollingService:
             self.stats['failed_polls'] += 1
 
     def get_status(self) -> Dict:
-        """Retorna status completo do polling service"""
+        """Retorna status completo"""
         status = {
             'is_running': self.is_running,
             'stats': self.stats.copy(),
@@ -342,58 +345,22 @@ class IfoodPollingService:
         
         return status
 
-    def update_config(self, poll_type: PollingType, **kwargs):
-        """Atualiza configuracao de polling"""
-        if poll_type in self.config:
-            for key, value in kwargs.items():
-                if hasattr(self.config[poll_type], key):
-                    setattr(self.config[poll_type], key, value)
-                    print(f"Config {poll_type.value}.{key} atualizado para: {value}")
-            
-            if self.is_running and self.config[poll_type].enabled:
-                self._restart_polling_thread(poll_type)
-
-    def _restart_polling_thread(self, poll_type: PollingType):
-        """Reinicia thread de polling especifica"""
-        if poll_type in self.threads:
-            old_thread = self.threads[poll_type]
-            if old_thread and old_thread.is_alive():
-                pass
-            
-            self._start_polling_thread(poll_type, self.config[poll_type])
-
     def _print_status(self):
-        """Imprime status atual do polling"""
+        """Imprime status atual"""
         status = self.get_status()
-        print("STATUS DO POLLING iFOOD")
-        print("=" * 40)
-        print(f"Executando: {'SIM' if status['is_running'] else 'NAO'}")
+        print("\n📊 STATUS DO POLLING iFOOD")
+        print("=" * 50)
+        print(f"Executando: {'✅ SIM' if status['is_running'] else '❌ NÃO'}")
         print(f"Total de polls: {status['stats']['total_polls']}")
         print(f"Bem-sucedidos: {status['stats']['successful_polls']}")
         print(f"Falhas: {status['stats']['failed_polls']}")
         print(f"Iniciado em: {status['stats']['started_at']}")
         
         if status['last_results']:
-            print("Ultimos resultados:")
+            print("Últimos resultados:")
             for poll_type, result in status['last_results'].items():
-                status_icon = "[OK]" if result['success'] else "[ERRO]"
+                status_icon = "✅" if result['success'] else "❌"
                 print(f"  {status_icon} {poll_type}: {result['items_processed']} itens")
 
-    def force_poll(self, poll_type: PollingType) -> PollingResult:
-        """Forca uma execucao imediata de polling"""
-        print(f"Forcando polling: {poll_type.value}")
-        
-        config = self.config.get(poll_type, PollingConfig())
-        result = self._execute_poll(poll_type, config)
-        
-        self.last_results[poll_type] = result
-        self._update_stats(result)
-        
-        if result.success:
-            self._process_successful_poll(result)
-        else:
-            self._process_failed_poll(result)
-        
-        return result
 
 ifood_polling_service = IfoodPollingService()

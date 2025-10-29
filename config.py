@@ -12,6 +12,17 @@ IFOOD_API_URL = os.getenv("IFOOD_API_URL", "https://merchant-api.ifood.com.br")
 IFOOD_CLIENT_ID = os.getenv("IFOOD_CLIENT_ID")
 IFOOD_CLIENT_SECRET = os.getenv("IFOOD_CLIENT_SECRET")
 IFOOD_MERCHANT_ID = os.getenv("IFOOD_MERCHANT_ID")
+
+
+# Configurações de polling
+POLLING_INTERVAL_ORDERS = 30  # 30 segundos - CRÍTICO PARA HOMOLOGAÇÃO
+POLLING_INTERVAL_STATUS = 60
+POLLING_INTERVAL_FULL_SYNC = 300
+
+# Timeouts
+REQUEST_TIMEOUT = 30
+MAX_RETRIES = 3
+
 #https://merchant-api.ifood.com.br/order/v1.0 
 
 # WhatsApp API 
