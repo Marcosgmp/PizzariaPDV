@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ifood_services.orders import IfoodOrderService, Order as IfoodOrder, EventCode
 from ifood_services.merchant import IfoodMerchantService, MerchantState
+from ifood_services.shipping import IfoodShippingService
 from config import IFOOD_MERCHANT_ID
 
 class PollingType(str, Enum):
@@ -44,6 +45,7 @@ class IfoodPollingService:
     def __init__(self):
         self.orders_service = IfoodOrderService()
         self.merchant_service = IfoodMerchantService()
+        self.shipping_service = IfoodShippingService()
         
         # CONFIGURAÇÃO PARA HOMOLOGAÇÃO
         self.config = {
@@ -196,21 +198,26 @@ class IfoodPollingService:
         return PollingResult(success=False, type=poll_type, error="Máximo de tentativas excedido")
 
     def _poll_orders(self) -> PollingResult:
-        """Polling específico para pedidos - CRÍTICO"""
+        """Polling específico para pedidos - ATUALIZADO com shipping"""
         try:
-            print("🔄 Polling de pedidos...")
+            print("Polling de pedidos...")
             events = self.orders_service.poll_events()
             
             new_orders = []
             for event in events:
                 if event.code == EventCode.PLC:
-                    print(f"🎉 NOVO PEDIDO detectado: {event.order_id}")
+                    print(f"NOVO PEDIDO detectado: {event.order_id}")
                     
                     order = self.orders_service.get_order_details(event.order_id)
                     if order:
                         new_orders.append(order)
-                        
-                    # ACKNOWLEDGMENT INDIVIDUAL
+                    
+                    self.shipping_service.process_shipping_event({
+                        'type': event.code,
+                        'orderId': event.order_id,
+                        'fullEvent': event.dict()
+                    })
+                    
                     self.orders_service.acknowledge_event(event.id)
             
             if new_orders:

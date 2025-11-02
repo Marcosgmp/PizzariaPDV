@@ -1,22 +1,41 @@
 import requests
-import sys
-import os
+import time
+import logging
+from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from enum import Enum
+from fastapi import HTTPException
+from functools import wraps
 
 from config import IFOOD_API_URL, IFOOD_MERCHANT_ID
 from ifood_services.auth import IfoodAuthService
 
-# ======================== DATACLASSES ========================
+class ShippingEventType(str, Enum):
+    REQUEST_DRIVER = "REQUEST_DRIVER"
+    REQUEST_DRIVER_SUCCESS = "REQUEST_DRIVER_SUCCESS" 
+    REQUEST_DRIVER_FAILED = "REQUEST_DRIVER_FAILED"
+    DELIVERY_CANCELLATION_REQUESTED = "DELIVERY_CANCELLATION_REQUESTED"
+    DELIVERY_CANCELLATION_REQUEST_ACCEPTED = "DELIVERY_CANCELLATION_REQUEST_ACCEPTED"
+    DELIVERY_CANCELLATION_REQUEST_REJECTED = "DELIVERY_CANCELLATION_REQUEST_REJECTED"
+    DELIVERY_DROP_CODE_REQUESTED = "DELIVERY_DROP_CODE_REQUESTED"
+    ASSIGN_DRIVER = "ASSIGN_DRIVER"
+    DELIVERY_ADDRESS_CHANGE_USER_CONFIRMED = "DELIVERY_ADDRESS_CHANGE_USER_CONFIRMED"
+    DELIVERY_ADDRESS_CHANGE_REQUESTED = "DELIVERY_ADDRESS_CHANGE_REQUESTED"
+    DELIVERY_ADDRESS_CHANGE_ACCEPTED = "DELIVERY_ADDRESS_CHANGE_ACCEPTED"
+    DELIVERY_ADDRESS_CHANGE_DENIED = "DELIVERY_ADDRESS_CHANGE_DENIED"
+
+class SafeDeliveryScore(str, Enum):
+    LOW = "LOW"
+    MODERATE = "MODERATE" 
+    HIGH = "HIGH"
+    VERY_HIGH = "VERY_HIGH"
 
 @dataclass
 class DeliveryQuote:
     id: str
     expiration_at: str
     created_at: str
-    distance: float
+    distance: int
     preparation_time: int
     gross_value: float
     discount: float
@@ -28,470 +47,466 @@ class DeliveryQuote:
     payment_methods: List[Dict[str, Any]]
 
 @dataclass
-class OrderItemOption:
-    id: str
-    name: str
-    externalCode: str
-    index: int
-    quantity: int
-    unitPrice: float
-    price: float
+class CancellationReason:
+    cancel_code_id: str
+    description: str
 
 @dataclass
-class OrderItemCreate:
-    id: str
-    name: str
-    externalCode: str
-    quantity: int
-    unitPrice: float
-    price: float
-    optionsPrice: float
-    totalPrice: float
-    options: List[OrderItemOption]
+class SafeDeliveryScore:
+    score: SafeDeliveryScore
+    rules: Dict[str, bool]
 
 @dataclass
-class OrderPaymentMethod:
-    method: str
-    type: str
-    value: float
-    card_brand: Optional[str] = None
+class TrackingInfo:
+    latitude: Optional[float]
+    longitude: Optional[float]
+    expected_delivery: Optional[str]
+    pickup_eta_start: int
+    delivery_eta_end: int
+    track_date: Optional[str]
 
-@dataclass
-class OrderPayment:
-    methods: List[OrderPaymentMethod]
+def retry_with_exponential_backoff(max_retries: int = 3, base_delay: float = 1.0):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    retries += 1
+                    if retries == max_retries:
+                        raise e
+                    delay = base_delay * (2 ** retries)
+                    logging.warning(f"Tentativa {retries} falhou. Retry em {delay}s: {e}")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
 
-@dataclass
-class OrderDeliveryAddress:
-    postalCode: str
-    streetNumber: str
-    streetName: str
-    complement: str
-    neighborhood: str
-    city: str
-    state: str
-    country: str
-    reference: str
-    latitude: float
-    longitude: float
+def log_operation(operation_name: str):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger = logging.getLogger(__name__)
+            try:
+                result = func(*args, **kwargs)
+                logger.info(f"SHIPPING_OP_SUCCESS - {operation_name}")
+                return result
+            except Exception as e:
+                logger.error(f"SHIPPING_OP_FAILED - {operation_name}: {str(e)}")
+                raise
+        return wrapper
+    return decorator
 
-@dataclass
-class OrderDelivery:
-    merchantFee: float
-    quoteId: str
-    deliveryAddress: OrderDeliveryAddress
-
-@dataclass
-class OrderCustomer:
-    name: str
-    countryCode: str
-    areaCode: str
-    number: str
-
-@dataclass
-class OrderCreateRequest:
-    customer: Dict[str, Any]
-    delivery: Dict[str, Any]
-    items: List[Dict[str, Any]]
-    payments: Dict[str, Any]
-    metadata: Dict[str, Any]
-
-
-# ======================== IfoodShippingService ========================
-
-class IfoodShipping:
-    """
-    Classe unificada para consultar disponibilidade de entrega
-    e criar pedidos no iFood.
-    """
-
+class IfoodShippingService:
     def __init__(self, merchant_id: str = None):
         self.base_url = f"{IFOOD_API_URL}/shipping/v1.0"
         self.merchant_id = merchant_id or IFOOD_MERCHANT_ID
         self.auth_service = IfoodAuthService()
         self.headers = {"Content-Type": "application/json"}
+        
+        self.callbacks = {
+            'delivery_assigned': [],
+            'delivery_cancelled': [],
+            'drop_code_requested': [],
+            'address_change_requested': []
+        }
+        
+        self.logger = logging.getLogger(__name__)
 
     def _get_headers(self):
         token = self.auth_service.get_token()
         return {**self.headers, "Authorization": f"Bearer {token}"}
 
-    # ======================== MERCHANTS/{merchantsid} ========================
+    def register_callback(self, event_type: str, callback: Callable):
+        if event_type in self.callbacks:
+            self.callbacks[event_type].append(callback)
+        else:
+            self.logger.warning(f"Tipo de evento desconhecido: {event_type}")
 
+    def _notify_callbacks(self, event_type: str, data: Dict):
+        for callback in self.callbacks.get(event_type, []):
+            try:
+                callback(data)
+            except Exception as e:
+                self.logger.error(f"Erro em callback {event_type}: {e}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("check_delivery_availability")
     def check_delivery_availability(self, latitude: float, longitude: float) -> Optional[DeliveryQuote]:
-        """Consulta disponibilidade de entrega para pedidos fora da plataforma iFood."""
         url = f"{self.base_url}/merchants/{self.merchant_id}/deliveryAvailabilities"
         params = {"latitude": latitude, "longitude": longitude}
 
         try:
             headers = self._get_headers()
-            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+
             if response.status_code == 200:
                 data = response.json()
-                quote = DeliveryQuote(
-                    id=data.get("id", ""),
-                    expiration_at=data.get("expirationAt", ""),
-                    created_at=data.get("createdAt", ""),
-                    distance=data.get("distance", 0),
-                    preparation_time=data.get("preparationTime", 0),
-                    gross_value=data["quote"].get("grossValue", 0),
-                    discount=data["quote"].get("discount", 0),
-                    raise_value=data["quote"].get("raise", 0),
-                    net_value=data["quote"].get("netValue", 0),
-                    delivery_time_min=data["deliveryTime"].get("min", 0),
-                    delivery_time_max=data["deliveryTime"].get("max", 0),
-                    has_payment_methods=data.get("hasPaymentMethods", False),
-                    payment_methods=data.get("paymentMethods", [])
-                )
-                return quote
+                return self._parse_delivery_quote(data)
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
             else:
-                print(f"Erro ao consultar disponibilidade: {response.status_code} - {response.text}")
-                return None
-        except Exception as e:
-            print(f"Erro ao consultar disponibilidade: {e}")
-            return None
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("check_order_delivery_availability")
     def check_order_delivery_availability(self, order_id: str) -> Optional[DeliveryQuote]:
-        """Consulta disponibilidade de entrega para pedidos da plataforma iFood."""
         url = f"{self.base_url}/orders/{order_id}/deliveryAvailabilities"
+
         try:
             headers = self._get_headers()
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                print(f"Erro ao consultar disponibilidade: {resp.status_code} - {resp.text}")
-                return None
-        except Exception as e:
-            print(f"Erro ao consultar disponibilidade: {e}")
-            return None
+            response = requests.get(url, headers=headers, timeout=30)
 
-    def create_order(self, order_data: dict) -> dict:
-        """Registra pedido fora da plataforma iFood e solicita entregador parceiro."""
+            if response.status_code == 200:
+                data = response.json()
+                return self._parse_delivery_quote(data)
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
+            else:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    def _parse_delivery_quote(self, data: Dict) -> DeliveryQuote:
+        return DeliveryQuote(
+            id=data.get("id", ""),
+            expiration_at=data.get("expirationAt", ""),
+            created_at=data.get("createdAt", ""),
+            distance=data.get("distance", 0),
+            preparation_time=data.get("preparationTime", 0),
+            gross_value=data.get("quote", {}).get("grossValue", 0),
+            discount=data.get("quote", {}).get("discount", 0),
+            raise_value=data.get("quote", {}).get("raise", 0),
+            net_value=data.get("quote", {}).get("netValue", 0),
+            delivery_time_min=data.get("deliveryTime", {}).get("min", 0),
+            delivery_time_max=data.get("deliveryTime", {}).get("max", 0),
+            has_payment_methods=data.get("hasPaymentMethods", False),
+            payment_methods=data.get("paymentMethods", [])
+        )
+
+    @retry_with_exponential_backoff()
+    @log_operation("create_external_order")
+    def create_external_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url}/merchants/{self.merchant_id}/orders"
+
+        self._validate_order_data(order_data)
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, json=order_data, timeout=15)
-            if resp.status_code in [200, 201, 202]:
-                return resp.json()
-            elif resp.status_code == 204:
-                return {}
-            else:
-                print(f"Erro ao criar pedido: {resp.status_code} - {resp.text}")
-                return {}
-        except Exception as e:
-            print(f"Erro ao criar pedido: {e}")
-            return {}
+            response = requests.post(url, headers=headers, json=order_data, timeout=30)
 
+            if response.status_code in [200, 201, 202]:
+                result = response.json()
+                return result
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
+            else:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    def _validate_order_data(self, order_data: Dict):
+        required_fields = {
+            'orderType': 'DELIVERY',
+            'orderTiming': 'IMMEDIATE', 
+            'salesChannel': 'POS'
+        }
+    
+        for field, expected_value in required_fields.items():
+            if order_data.get(field) != expected_value:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Campo {field} deve ser '{expected_value}' para homologação"
+                )
+    
+        phone_type = order_data.get('customer', {}).get('phone', {}).get('type')
+        if phone_type != 'CUSTOMER':
+            raise HTTPException(
+                status_code=422,
+                detail="customer.phone.type deve ser 'CUSTOMER' para elegibilidade de confirmação"
+            )
+
+    @retry_with_exponential_backoff()
+    @log_operation("request_driver_for_order")
     def request_driver_for_order(self, order_id: str, quote_id: str) -> bool:
-        """Solicita entregador para pedido da plataforma iFood."""
         url = f"{self.base_url}/orders/{order_id}/requestDriver"
         data = {"quoteId": quote_id}
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, json=data, timeout=10)
-            if resp.status_code == 202:
-                print("Solicitação de entregador registrada com sucesso!")
-                return True
-            else:
-                print(f"Erro ao solicitar entregador: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao solicitar entregador: {e}")
-            return False
+            response = requests.post(url, headers=headers, json=data, timeout=30)
 
-    def cancel_order(self, order_id: str, cancellation_code: str, reason: str) -> bool:
-        """Cancela pedido fora da plataforma iFood."""
-        url = f"{self.base_url}/orders/{order_id}/cancel"
-        data = {"cancellationCode": cancellation_code, "reason": reason}
-        try:
-            headers = self._get_headers()
-            resp = requests.post(url, headers=headers, json=data, timeout=10)
-            if resp.status_code == 202:
-                print("Pedido cancelado com sucesso!")
+            if response.status_code == 202:
                 return True
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
             else:
-                print(f"Erro ao cancelar pedido: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao cancelar pedido: {e}")
-            return False
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("cancel_request_driver")
     def cancel_request_driver(self, order_id: str) -> bool:
-        """Cancela apenas a solicitação de entregador de um pedido da plataforma iFood."""
         url = f"{self.base_url}/orders/{order_id}/cancelRequestDriver"
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, timeout=10)
-            if resp.status_code == 202:
-                print("Solicitação de cancelamento do entregador registrada!")
-                return True
-            else:
-                print(f"Erro ao cancelar entregador: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao cancelar entregador: {e}")
-            return False
+            response = requests.post(url, headers=headers, timeout=30)
 
-    def get_order_cancellation_reasons(self, order_id: str) -> list:
-        """Consulta motivos/códigos de cancelamento disponíveis para o pedido."""
+            if response.status_code == 202:
+                self._notify_callbacks('delivery_cancelled', {
+                    'order_id': order_id,
+                    'timestamp': time.time(),
+                    'type': 'REQUEST_DRIVER_CANCELLATION'
+                })
+                return True
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
+            else:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("get_cancellation_reasons")
+    def get_cancellation_reasons(self, order_id: str) -> List[CancellationReason]:
         url = f"{self.base_url}/orders/{order_id}/cancellationReasons"
+
         try:
             headers = self._get_headers()
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-            elif resp.status_code == 204:
-                print("Nenhum motivo disponível para cancelamento.")
+            response = requests.get(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                reasons_data = response.json()
+                return [
+                    CancellationReason(
+                        cancel_code_id=item.get("cancelCodeId", ""),
+                        description=item.get("description", "")
+                    )
+                    for item in reasons_data
+                ]
+            elif response.status_code == 204:
                 return []
             else:
-                print(f"Erro ao buscar motivos de cancelamento: {resp.status_code} - {resp.text}")
-                return []
-        except Exception as e:
-            print(f"Erro ao buscar motivos de cancelamento: {e}")
-            return []
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("cancel_order")
+    def cancel_order(self, order_id: str, cancellation_code: str, reason: str) -> bool:
+        url = f"{self.base_url}/orders/{order_id}/cancel"
+        data = {"reason": reason, "cancellationCode": cancellation_code}
+
+        try:
+            headers = self._get_headers()
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+
+            if response.status_code == 202:
+                return True
+            elif response.status_code == 400:
+                error_data = response.json()
+                raise HTTPException(status_code=400, detail=error_data.get('message', 'Erro desconhecido'))
+            else:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("confirm_order_address")
     def confirm_order_address(self, order_id: str) -> bool:
-        """Confirma o endereço do pedido."""
         url = f"{self.base_url}/orders/{order_id}/userConfirmAddress"
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, timeout=10)
-            if resp.status_code == 202:
-                print("Endereço confirmado com sucesso!")
+            response = requests.post(url, headers=headers, timeout=30)
+
+            if response.status_code == 202:
                 return True
             else:
-                print(f"Erro ao confirmar endereço: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao confirmar endereço: {e}")
-            return False
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
-    def request_address_change(self, order_id: str, address_data: dict) -> bool:
-        """Solicita alteração do endereço de entrega."""
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("request_address_change")
+    def request_address_change(self, order_id: str, address_data: Dict[str, Any]) -> bool:
         url = f"{self.base_url}/orders/{order_id}/deliveryAddressChangeRequest"
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, json=address_data, timeout=10)
-            if resp.status_code == 202:
-                print("Solicitação de alteração de endereço registrada!")
+            response = requests.post(url, headers=headers, json=address_data, timeout=30)
+
+            if response.status_code == 202:
+                self._notify_callbacks('address_change_requested', {
+                    'order_id': order_id,
+                    'new_address': address_data,
+                    'timestamp': time.time()
+                })
                 return True
             else:
-                print(f"Erro ao solicitar alteração de endereço: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao solicitar alteração de endereço: {e}")
-            return False
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("accept_address_change")
     def accept_address_change(self, order_id: str) -> bool:
-        """Aceita alteração de endereço solicitada."""
         url = f"{self.base_url}/orders/{order_id}/acceptDeliveryAddressChange"
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, timeout=10)
-            if resp.status_code == 202:
-                print("Alteração de endereço aceita!")
+            response = requests.post(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
                 return True
             else:
-                print(f"Erro ao aceitar alteração de endereço: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao aceitar alteração de endereço: {e}")
-            return False
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("deny_address_change")
     def deny_address_change(self, order_id: str) -> bool:
-        """Rejeita alteração de endereço solicitada."""
         url = f"{self.base_url}/orders/{order_id}/denyDeliveryAddressChange"
+
         try:
             headers = self._get_headers()
-            resp = requests.post(url, headers=headers, timeout=10)
-            if resp.status_code == 202:
-                print("Alteração de endereço rejeitada!")
+            response = requests.post(url, headers=headers, timeout=30)
+
+            if response.status_code == 202:
                 return True
             else:
-                print(f"Erro ao rejeitar alteração de endereço: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            print(f"Erro ao rejeitar alteração de endereço: {e}")
-            return False
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
-    def get_safe_delivery_score(self, order_id: str) -> dict:
-        """Consulta o nível de confiança da entrega do pedido."""
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("get_safe_delivery_score")
+    def get_safe_delivery_score(self, order_id: str) -> SafeDeliveryScore:
         url = f"{self.base_url}/orders/{order_id}/safeDelivery"
+
         try:
             headers = self._get_headers()
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                print(f"Erro ao consultar score de entrega: {resp.status_code} - {resp.text}")
-                return {}
-        except Exception as e:
-            print(f"Erro ao consultar score de entrega: {e}")
-            return {}
+            response = requests.get(url, headers=headers, timeout=30)
 
-    def track_order(self, order_id: str) -> dict:
-        """Rastreia o pedido e retorna informações do entregador."""
+            if response.status_code == 200:
+                data = response.json()
+                return SafeDeliveryScore(
+                    score=SafeDeliveryScore(data.get("score", "LOW")),
+                    rules=data.get("rules", {})
+                )
+            else:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
+
+    @retry_with_exponential_backoff()
+    @log_operation("track_order")
+    def track_order(self, order_id: str) -> TrackingInfo:
         url = f"{self.base_url}/orders/{order_id}/tracking"
+
         try:
             headers = self._get_headers()
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
+            response = requests.get(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                data = response.json()
+                return TrackingInfo(
+                    latitude=data.get("latitude"),
+                    longitude=data.get("longitude"),
+                    expected_delivery=data.get("expectedDelivery"),
+                    pickup_eta_start=data.get("pickupEtaStart", 0),
+                    delivery_eta_end=data.get("deliveryEtaEnd", 0),
+                    track_date=data.get("trackDate")
+                )
+            elif response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Rastreamento não disponível")
             else:
-                print(f"Erro ao rastrear pedido: {resp.status_code} - {resp.text}")
-                return {}
-        except Exception as e:
-            print(f"Erro ao rastrear pedido: {e}")
-            return {}
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data)
 
-if __name__ == "__main__":
-    service = IfoodShipping()
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Erro de conexão: {str(e)}")
 
-    latitude = -9.822384
-    longitude = -67.948589
+    def process_shipping_event(self, event_data: Dict[str, Any]):
+        event_type = event_data.get('type')
+        order_id = event_data.get('orderId')
 
-    # 1️⃣ Verificar disponibilidade de entrega (fora do iFood)
-    quote = service.check_delivery_availability(latitude, longitude)
-    if not quote:
-        print("\n🚫 Nenhuma disponibilidade de entrega encontrada.")
-        exit()
+        if event_type == ShippingEventType.ASSIGN_DRIVER:
+            self._handle_assign_driver(event_data)
+        elif event_type == ShippingEventType.DELIVERY_DROP_CODE_REQUESTED:
+            self._handle_drop_code_requested(event_data)
+        elif event_type == ShippingEventType.DELIVERY_ADDRESS_CHANGE_REQUESTED:
+            self._handle_address_change_requested(event_data)
+        elif event_type == ShippingEventType.REQUEST_DRIVER_SUCCESS:
+            self._handle_request_driver_success(event_data)
+        elif event_type == ShippingEventType.REQUEST_DRIVER_FAILED:
+            self._handle_request_driver_failed(event_data)
 
-    print(f"\n✅ Entrega disponível! Quote ID: {quote.id}, Valor: R$ {quote.net_value:.2f}")
+    def _handle_assign_driver(self, event_data: Dict):
+        self._notify_callbacks('delivery_assigned', event_data)
 
-    # 2️⃣ Criar pedido fora do iFood
-    order_data = {
-        "orderType": "DELIVERY",
-        "customer": {
-            "name": "Artur Souza",
-            "phone": {
-                "type": "CUSTOMER",  # Adicionado para garantir elegibilidade!
-                "countryCode": "55",
-                "areaCode": "85",
-                "number": "999999999"
-            }
-        },
-        "delivery": {
-            "merchantFee": 8.99,
-            "quoteId": quote.id,
-            "deliveryAddress": {
-                "postalCode": "69923000",
-                "streetNumber": "122",
-                "streetName": "Rua Ramal Bujari",
-                "neighborhood": "Centro",
-                "city": "Bujari",
-                "state": "AC",
-                "country": "BR",
-                "reference": "Perto da praça",
-                "coordinates": {
-                    "latitude": latitude,
-                    "longitude": longitude
-                }
-            }
-        },
-        "items": [
-            {
-                "id": "d40f9b0a-5e55-4df1-bc3c-1b1ec7fcb2c0",
-                "name": "Pizza Mussarela",
-                "externalCode": "PZ001",
-                "quantity": 1,
-                "unitPrice": 25.00,
-                "price": 25.00,
-                "optionsPrice": 0,
-                "totalPrice": 25.00,
-                "options": []
-            }
-        ],
-        "payments": {
-            "methods": [
-                {
-                    "method": "CREDIT",
-                    "type": "OFFLINE",
-                    "value": 33.99,
-                    "card": {"brand": "VISA"}
-                }
-            ]
-        },
-        "metadata": {"elitab": "pedido_teste_01", "sit_4": "via_api"}
-    }
+    def _handle_drop_code_requested(self, event_data: Dict):
+        code = event_data.get('metadata', {}).get('CODE')
+        order_id = event_data.get('orderId')
+        
+        self._notify_callbacks('drop_code_requested', {
+            'order_id': order_id,
+            'code': code,
+            'timestamp': time.time()
+        })
 
-    created_order = service.create_order(order_data)
-    if not created_order or 'id' not in created_order:
-        print("\n❌ Falha ao criar pedido.")
-        exit()
+    def _handle_address_change_requested(self, event_data: Dict):
+        self._notify_callbacks('address_change_requested', event_data)
 
-    order_id = created_order['id']
-    print("\n✅ Pedido criado com sucesso!")
-    print(created_order)
+    def _handle_request_driver_success(self, event_data: Dict):
+        pass
 
-    # 3️⃣ Confirmar endereço do pedido (só se o tipo for CUSTOMER)
-    if order_data["customer"]["phone"].get("type") == "CUSTOMER":
-        if service.confirm_order_address(order_id):
-            print("\n📦 Endereço confirmado!")
-        else:
-            print("\n❌ Falha ao confirmar endereço.")
-    else:
-        print("\n⚠️ Endereço não pode ser confirmado pois o tipo do telefone não é CUSTOMER.")
+    def _handle_request_driver_failed(self, event_data: Dict):
+        pass
 
-    # 4️⃣ Consultar motivos de cancelamento
-    reasons = service.get_order_cancellation_reasons(order_id)
-    print("\n📋 Motivos de cancelamento disponíveis:")
-    print(reasons)
-
-    # 5️⃣ Consultar score de entrega
-    score = service.get_safe_delivery_score(order_id)
-    print("\n🔒 Score de entrega:")
-    print(score)
-
-    # 6️⃣ Rastrear pedido (só se houver entregador atribuído)
-    tracking = service.track_order(order_id)
-    if tracking:
-        print("\n🚚 Rastreamento do pedido:")
-        print(tracking)
-    else:
-        print("\n⚠️ Rastreamento indisponível. Aguarde atribuição do entregador.")
-
-    # 7️⃣ Solicitar alteração de endereço
-    novo_endereco = {
-        "streetName": "Rua Nova",
-        "streetNumber": "200",
-        "complement": "",
-        "reference": "Próximo ao mercado",
-        "neighborhood": "Centro",
-        "city": "Bujari",
-        "state": "AC",
-        "country": "BR",
-        "coordinates": {
-            "latitude": -9.822300,
-            "longitude": -67.948600
+    def get_service_status(self) -> Dict[str, Any]:
+        return {
+            "service": "IfoodShippingService",
+            "merchant_id": self.merchant_id,
+            "base_url": self.base_url,
+            "callbacks_registered": {k: len(v) for k, v in self.callbacks.items()},
+            "status": "ACTIVE"
         }
-    }
-    if service.request_address_change(order_id, novo_endereco):
-        print("\n✏️ Solicitação de alteração de endereço registrada!")
-    else:
-        print("\n❌ Falha ao solicitar alteração de endereço.")
 
-    # 8️⃣ Aceitar alteração de endereço
-    if service.accept_address_change(order_id):
-        print("\n✅ Alteração de endereço aceita!")
-    else:
-        print("\n❌ Falha ao aceitar alteração de endereço.")
-
-    # 9️⃣ Rejeitar alteração de endereço
-    if service.deny_address_change(order_id):
-        print("\n🚫 Alteração de endereço rejeitada!")
-    else:
-        print("\n❌ Falha ao rejeitar alteração de endereço.")
-
-    # 10️⃣ Cancelar pedido
-    if reasons:
-        cancel_code = reasons[0]['cancelCodeId']
-        cancel_reason = reasons[0]['description']
-        if service.cancel_order(order_id, cancel_code, cancel_reason):
-            print("\n🛑 Pedido cancelado com sucesso!")
-        else:
-            print("\n❌ Falha ao cancelar pedido.")
-
-    # 11️⃣ Cancelar solicitação de entregador
-    if service.cancel_request_driver(order_id):
-        print("\n🛑 Solicitação de entregador cancelada!")
-    else:
-        print("\n❌ Falha ao cancelar solicitação de entregador.")
+ifood_shipping_service = IfoodShippingService()
