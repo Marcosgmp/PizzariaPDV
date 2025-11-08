@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/linxartssz/Documentos/Projetos/PizzariaPDV/pizzavenv
+set -gx VIRTUAL_ENV /home/marcos/Documentos/GitHub/PizzariaPDV/pizzavenv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

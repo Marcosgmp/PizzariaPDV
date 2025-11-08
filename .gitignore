@@ -1,2 +1,4 @@
-pizzaven
+pizzavenv/
 .env
+venv/
+*.venv/

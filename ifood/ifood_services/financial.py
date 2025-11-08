@@ -17,7 +17,7 @@ class IfoodFinancialService:
         token = self.auth_service.get_token()
         return {**self.headers, "Authorization": f"Bearer {token}"}
 
-    # 1️⃣ Conciliation
+    #  Conciliation
     def get_reconciliation(self, competence: str) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/reconciliation"
         params = {"competence": competence}
@@ -36,7 +36,7 @@ class IfoodFinancialService:
             print(f"Erro ao consultar conciliação: {e}")
             return {}
 
-    # 2️⃣ Settlements
+    #  Settlements
     def get_settlements(self, begin_payment_date: str, end_payment_date: str,
                         begin_calculation_date: str = None, end_calculation_date: str = None) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/settlements"
@@ -63,7 +63,7 @@ class IfoodFinancialService:
             print(f"Erro ao consultar settlements: {e}")
             return {}
 
-    # 3️⃣ Anticipations
+    #  Anticipations
     def get_anticipations(self, begin_calculation_date: str, end_calculation_date: str,
                           begin_anticipated_payment_date: str = None, end_anticipated_payment_date: str = None) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/anticipations"
@@ -90,7 +90,7 @@ class IfoodFinancialService:
             print(f"Erro ao consultar antecipações: {e}")
             return {}
 
-    # 4️⃣ Sales
+    #  Sales
     def get_sales(self, begin_sales_date: str, end_sales_date: str, page: int = 1) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/sales"
         params = {
@@ -114,7 +114,7 @@ class IfoodFinancialService:
             print(f"Erro ao consultar vendas: {e}")
             return {}
 
-    # 5️⃣ Financial Events
+    # Financial Events
     def get_financial_events(self, begin_date: str, end_date: str, page: int = 1, size: int = 100) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/financial-events"
         params = {
@@ -139,7 +139,7 @@ class IfoodFinancialService:
             print(f"Erro ao consultar eventos financeiros: {e}")
             return {}
 
-    # 6️⃣ Reconciliation On Demand (POST)
+    #  Reconciliation On Demand (POST)
     def request_reconciliation_on_demand(self, competence: str) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/reconciliation/on-demand"
         payload = {"competence": competence}
@@ -159,7 +159,7 @@ class IfoodFinancialService:
             print(f"Erro ao solicitar conciliação on demand: {e}")
             return {}
 
-    # 7️⃣ Get Reconciliation On Demand by requestId (GET)
+    #  Get Reconciliation On Demand by requestId (GET)
     def get_reconciliation_on_demand(self, request_id: str) -> dict:
         url = f"{self.base_url}/merchants/{self.merchant_id}/reconciliation/on-demand/{request_id}"
         try:

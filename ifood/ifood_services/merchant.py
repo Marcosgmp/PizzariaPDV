@@ -1,9 +1,7 @@
 import requests
-import time
-import threading
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -43,7 +41,7 @@ class MerchantStatus:
 class MerchantBasicInfo:
     id: str
     name: str
-    corporate_name: str
+    corporateName: str
     description: str
     created: str
     status: str
@@ -52,19 +50,51 @@ class MerchantBasicInfo:
 class MerchantDetails:
     id: str
     name: str
-    corporate_name: str
+    corporateName: str
     description: str
     created: str
     status: str
-    average_ticket: float
+    averageTicket: float
     operation: Dict[str, Any]
     address: Dict[str, Any]
     contacts: List[Dict[str, Any]]
-    bank_accounts: List[Dict[str, Any]]
-    delivery_zones: List[Dict[str, Any]]
+    bankAccounts: List[Dict[str, Any]]
+    deliveryZones: List[Dict[str, Any]]
     metadata: Dict[str, Any]
 
+@dataclass
+class Interruption:
+    id: str
+    description: str
+    startTime: str
+    endTime: str
+    reason: str
+    status: str
+
+@dataclass
+class OpeningHours:
+    daysOfWeek: List[str]
+    timePeriods: List[Dict[str, str]]
+
+
 class IfoodMerchantService:
+    """
+    iFood Merchant API Service
+    
+    Serviço dedicado para operações Merchant da API iFood.
+    PARA POLLING AUTOMÁTICO, use IfoodPollingService.
+    
+    Endpoints Implementados:
+    - GET    /merchants                    - Listar todos os merchants
+    - GET    /merchants/{merchantId}       - Obter detalhes do merchant
+    - GET    /merchants/{merchantId}/status - Obter status do merchant
+    - GET    /merchants/{merchantId}/interruptions - Listar interrupções
+    - POST   /merchants/{merchantId}/interruptions - Criar interrupção
+    - DELETE /merchants/{merchantId}/interruptions/{interruptionId} - Remover interrupção
+    - GET    /merchants/{merchantId}/opening-hours - Obter horário de funcionamento
+    - PUT    /merchants/{merchantId}/opening-hours - Atualizar horário de funcionamento
+    """
+    
     def __init__(self, is_test_environment: bool = True):
         self.base_url = f"{IFOOD_API_URL}/merchant/v1.0"
         self.merchant_id = IFOOD_MERCHANT_ID
@@ -72,17 +102,10 @@ class IfoodMerchantService:
         self.headers = {
             "Content-Type": "application/json"
         }
-        self.last_polling_time = None
-        self.polling_active = False
-        self.polling_thread = None
-        self.polling_interval = 30
-        self.polling_counter = 0
-        self._last_status = None
-        self._last_status_time = None
         self.is_test_environment = is_test_environment
         
         if is_test_environment:
-            print("AMBIENTE DE TESTE DETECTADO")
+            print("AMBIENTE DE TESTE DETECTADO - Merchant Service")
 
     def _get_headers(self):
         """Get headers with current access token"""
@@ -91,6 +114,46 @@ class IfoodMerchantService:
             **self.headers,
             "Authorization": f"Bearer {token}"
         }
+    
+    def _parse_merchant_basic_info(self, data: Dict) -> MerchantBasicInfo:
+        """Parse merchant basic info according to iFood standards"""
+        return MerchantBasicInfo(
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            corporateName=data.get("corporateName", ""),
+            description=data.get("description", ""),
+            created=data.get("created", ""),
+            status=data.get("status", "")
+        )
+    
+    def _parse_merchant_details(self, data: Dict) -> MerchantDetails:
+        """Parse merchant details according to iFood standards"""
+        return MerchantDetails(
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            corporateName=data.get("corporateName", ""),
+            description=data.get("description", ""),
+            created=data.get("created", ""),
+            status=data.get("status", ""),
+            averageTicket=data.get("averageTicket", 0),
+            operation=data.get("operation", {}),
+            address=data.get("address", {}),
+            contacts=data.get("contacts", []),
+            bankAccounts=data.get("bankAccounts", []),
+            deliveryZones=data.get("deliveryZones", []),
+            metadata=data.get("metadata", {})
+        )
+
+    def _parse_interruption_response(self, data: Dict) -> Interruption:
+        """Parse interruption response according to iFood standards"""
+        return Interruption(
+            id=data.get("id"),
+            description=data.get("description"),
+            startTime=data.get("startTime"),
+            endTime=data.get("endTime"),
+            reason=data.get("reason"),
+            status=data.get("status")
+        )
     
     def test_authentication(self):
         """Test authentication"""
@@ -107,36 +170,8 @@ class IfoodMerchantService:
             print(f"ERRO NA AUTENTICACAO: {e}")
             return False
 
-    def test_api_endpoints(self):
-        """Test endpoints available"""
-        print("TESTANDO ENDPOINTS...")
-        
-        endpoints = {
-            "list_merchants": f"{self.base_url}/merchants",
-            "merchant_details": f"{self.base_url}/merchants/{self.merchant_id}",
-            "merchant_status": f"{self.base_url}/merchants/{self.merchant_id}/status",
-        }
-        
-        available_endpoints = []
-        
-        for name, url in endpoints.items():
-            try:
-                headers = self._get_headers()
-                resp = requests.get(url, headers=headers, timeout=10)
-                
-                if resp.status_code == 200:
-                    print(f"{name}: DISPONIVEL")
-                    available_endpoints.append(name)
-                else:
-                    print(f"{name}: STATUS {resp.status_code}")
-                    
-            except Exception as e:
-                print(f"{name}: ERRO - {e}")
-        
-        return available_endpoints
-
     def list_merchants(self) -> List[MerchantBasicInfo]:
-        """List all available merchants"""
+        """List all available merchants - GET /merchants"""
         url = f"{self.base_url}/merchants"
         
         try:
@@ -148,14 +183,7 @@ class IfoodMerchantService:
 
             merchants = []
             for merchant_data in data:
-                merchant = MerchantBasicInfo(
-                    id=merchant_data.get("id", ""),
-                    name=merchant_data.get("name", ""),
-                    corporate_name=merchant_data.get("corporateName", ""),
-                    description=merchant_data.get("description", ""),
-                    created=merchant_data.get("created", ""),
-                    status=merchant_data.get("status", "")
-                )
+                merchant = self._parse_merchant_basic_info(merchant_data)
                 merchants.append(merchant)
 
             print(f"Encontrados {len(merchants)} merchant(s)")
@@ -175,7 +203,7 @@ class IfoodMerchantService:
             return []
 
     def get_merchant_details(self, merchant_id: str = None) -> Optional[MerchantDetails]:
-        """Get full details of a specific merchant"""
+        """Get full details of a specific merchant - GET /merchants/{merchantId}"""
         if not merchant_id:
             merchant_id = self.merchant_id
             
@@ -188,22 +216,7 @@ class IfoodMerchantService:
             resp.raise_for_status()
             data = resp.json()
 
-            merchant = MerchantDetails(
-                id=data.get("id", ""),
-                name=data.get("name", ""),
-                corporate_name=data.get("corporateName", ""),
-                description=data.get("description", ""),
-                created=data.get("created", ""),
-                status=data.get("status", ""),
-                average_ticket=data.get("averageTicket", 0),
-                operation=data.get("operation", {}),
-                address=data.get("address", {}),
-                contacts=data.get("contacts", []),
-                bank_accounts=data.get("bankAccounts", []),
-                delivery_zones=data.get("deliveryZones", []),
-                metadata=data.get("metadata", {})
-            )
-
+            merchant = self._parse_merchant_details(data)
             self._print_merchant_details(merchant)
             return merchant
 
@@ -225,11 +238,11 @@ class IfoodMerchantService:
         print(f"INFORMACOES BASICAS:")
         print(f"  ID: {merchant.id}")
         print(f"  Nome: {merchant.name}")
-        print(f"  Razao Social: {merchant.corporate_name}")
+        print(f"  Razao Social: {merchant.corporateName}")
         print(f"  Descricao: {merchant.description}")
         print(f"  Status: {merchant.status}")
         print(f"  Criado em: {merchant.created}")
-        print(f"  Ticket Medio: R$ {merchant.average_ticket:.2f}")
+        print(f"  Ticket Medio: R$ {merchant.averageTicket:.2f}")
         
         if merchant.operation:
             print(f"OPERACAO:")
@@ -248,22 +261,9 @@ class IfoodMerchantService:
             print(f"  Cidade: {addr.get('city', 'N/A')}")
             print(f"  Estado: {addr.get('state', 'N/A')}")
             print(f"  CEP: {addr.get('postalCode', 'N/A')}")
-        
-        if merchant.contacts:
-            print(f"CONTATOS:")
-            for contact in merchant.contacts[:3]:
-                print(f"  - {contact.get('name', 'N/A')}: {contact.get('number', 'N/A')}")
-        
-        if merchant.delivery_zones:
-            print(f"ZONAS DE ENTREGA: {len(merchant.delivery_zones)} zona(s)")
-            for zone in merchant.delivery_zones[:2]:
-                print(f"  - {zone.get('name', 'N/A')} (R$ {zone.get('deliveryPrice', 0):.2f})")
-        
-        if merchant.bank_accounts:
-            print(f"CONTAS BANCARIAS: {len(merchant.bank_accounts)} conta(s)")
 
     def get_merchant_status(self, merchant_id: str = None) -> MerchantStatus:
-        """Gets the status of a specific merchant"""
+        """Gets the status of a specific merchant - GET /merchants/{merchantId}/status"""
         if not merchant_id:
             merchant_id = self.merchant_id
             
@@ -277,8 +277,6 @@ class IfoodMerchantService:
 
             if isinstance(data, list) and len(data) > 0:
                 data = data[0]
-
-            self.last_polling_time = datetime.now()
 
             state = MerchantState(data.get("state", "UNKNOWN"))
             
@@ -350,49 +348,130 @@ class IfoodMerchantService:
             for v in status.validations:
                 status_icon = "[OK]" if v.passed else "[ERRO]"
                 print(f"   {status_icon} {v.id}: {v.description}")
-
-    def start_polling(self):
-        """Start automatic polling"""
-        if self.polling_active:
-            print("Polling ja esta ativo")
-            return
-
-        self.polling_active = True
-        self.polling_thread = threading.Thread(target=self._polling_worker, daemon=True)
-        self.polling_thread.start()
-        print("Polling iniciado (30 segundos)")
-
-    def stop_polling(self):
-        """Stop automatic polling"""
-        self.polling_active = False
-        if self.polling_thread:
-            self.polling_thread.join(timeout=5)
-        print("Polling parado")
-
-    def _polling_worker(self):
-        """Worker thread para polling regular"""
-        while self.polling_active:
-            try:
-                self.get_merchant_status()
-                
-                self.last_polling_time = datetime.now()
-                self.polling_counter += 1
-                
-            except Exception as e:
-                print(f"Erro no polling: {e}")
+    
+    def create_interruption(self, merchant_id: str, description: str, start_time: str, 
+        end_time: str, reason: str = "TECHNICAL_ISSUE") -> Optional[Interruption]:
+        """Cria uma interrupção no merchant - POST /merchants/{merchantId}/interruptions"""
+        url = f"{self.base_url}/merchants/{merchant_id}/interruptions"
+        
+        payload = {
+            "description": description,
+            "startTime": start_time,
+            "endTime": end_time,
+            "reason": reason
+        }
+        
+        try:
+            headers = self._get_headers()
+            print(f"Criando interrupção para merchant {merchant_id}...")
+            resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
             
-            time.sleep(self.polling_interval)
+            interruption = self._parse_interruption_response(data)
+            print(f"Interrupção criada: ID {interruption.id}")
+            return interruption
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 400:
+                print(f"Erro 400 ao criar interrupção: {e.response.text}")
+            else:
+                print(f"Erro HTTP {e.response.status_code}: {e.response.text}")
+            return None
+        except Exception as e:
+            print(f"Erro ao criar interrupção: {e}")
+            return None
 
-    def is_polling_healthy(self) -> bool:
-        """Check if polling is healthy"""
-        if not self.last_polling_time:
+    def list_interruptions(self, merchant_id: str) -> List[Interruption]:
+        """Lista interrupções do merchant - GET /merchants/{merchantId}/interruptions"""
+        url = f"{self.base_url}/merchants/{merchant_id}/interruptions"
+        
+        try:
+            headers = self._get_headers()
+            print(f"Listando interrupções do merchant {merchant_id}...")
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            interruptions = []
+            for item in data:
+                interruption = self._parse_interruption_response(item)
+                interruptions.append(interruption)
+            
+            print(f"Encontradas {len(interruptions)} interrupção(ões)")
+            return interruptions
+            
+        except Exception as e:
+            print(f"Erro ao listar interrupções: {e}")
+            return []
+
+    def get_merchant_interruptions(self, merchant_id: str) -> List[Interruption]:
+        """Alias para list_interruptions - para padronização com controller"""
+        return self.list_interruptions(merchant_id)
+
+    def delete_interruption(self, merchant_id: str, interruption_id: str) -> bool:
+        """Remove uma interrupção - DELETE /merchants/{merchantId}/interruptions/{interruptionId}"""
+        url = f"{self.base_url}/merchants/{merchant_id}/interruptions/{interruption_id}"
+        
+        try:
+            headers = self._get_headers()
+            print(f"Deletando interrupção {interruption_id}...")
+            resp = requests.delete(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            print(f"Interrupção {interruption_id} deletada com sucesso")
+            return True
+            
+        except Exception as e:
+            print(f"Erro ao deletar interrupção: {e}")
             return False
-        time_since_last_poll = (datetime.now() - self.last_polling_time).total_seconds()
-        return time_since_last_poll <= self.polling_interval + 10
 
-def run_complete_merchant_tests():
-    """Testes completos das funcionalidades de merchant"""
-    print("TESTES COMPLETOS - MERCHANT SERVICE")
+    def get_opening_hours(self, merchant_id: str) -> Optional[OpeningHours]:
+        """Obtém horário de funcionamento - GET /merchants/{merchantId}/opening-hours"""
+        url = f"{self.base_url}/merchants/{merchant_id}/opening-hours"
+        
+        try:
+            headers = self._get_headers()
+            print(f"Obtendo horário de funcionamento do merchant {merchant_id}...")
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            opening_hours = OpeningHours(
+                daysOfWeek=data.get("daysOfWeek", []),
+                timePeriods=data.get("timePeriods", [])
+            )
+            
+            print(f"Horário obtido: {len(opening_hours.daysOfWeek)} dia(s) configurado(s)")
+            return opening_hours
+            
+        except Exception as e:
+            print(f"Erro ao obter horário de funcionamento: {e}")
+            return None
+
+    def update_opening_hours(self, merchant_id: str, opening_hours: OpeningHours) -> bool:
+        """Atualiza horário de funcionamento - PUT /merchants/{merchantId}/opening-hours"""
+        url = f"{self.base_url}/merchants/{merchant_id}/opening-hours"
+        
+        payload = {
+            "daysOfWeek": opening_hours.daysOfWeek,
+            "timePeriods": opening_hours.timePeriods
+        }
+        
+        try:
+            headers = self._get_headers()
+            print(f"Atualizando horário de funcionamento do merchant {merchant_id}...")
+            resp = requests.put(url, json=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            print("Horário de funcionamento atualizado com sucesso")
+            return True
+            
+        except Exception as e:
+            print(f"Erro ao atualizar horário de funcionamento: {e}")
+            return False
+
+def run_merchant_service_tests():
+    """Testes básicos do Merchant Service (sem polling)"""
+    print("TESTES MERCHANT SERVICE (SEM POLLING)")
     print("=" * 60)
     
     merchant_service = IfoodMerchantService(is_test_environment=True)
@@ -409,45 +488,25 @@ def run_complete_merchant_tests():
     merchants = merchant_service.list_merchants()
     
     if merchants:
-        print("3. DETALHES DO MERCHANT ATUAL")
-        print("-" * 30)
-        current_merchant = merchant_service.get_merchant_details()
-        
-        print("4. STATUS DO MERCHANT ATUAL")
-        print("-" * 30)
-        status = merchant_service.get_merchant_status()
-        
-        if len(merchants) > 1:
-            print("5. STATUS DE OUTROS MERCHANTS")
-            print("-" * 30)
-            for merchant in merchants[1:3]:
-                print(f"Status do merchant: {merchant.name}")
-                merchant_service.get_merchant_status(merchant.id)
-    else:
-        print("Nenhum merchant encontrado para teste")
-        
-        print("3. DETALHES DO MERCHANT CONFIGURADO")
+        print("3. DETALHES DO MERCHANT")
         print("-" * 30)
         merchant_service.get_merchant_details()
         
-        print("4. STATUS DO MERCHANT CONFIGURADO")
+        print("4. STATUS DO MERCHANT")
         print("-" * 30)
         merchant_service.get_merchant_status()
 
-    print("6. ENDPOINTS DISPONIVEIS")
-    print("-" * 30)
-    merchant_service.test_api_endpoints()
-
     print("=" * 60)
     print("TESTES CONCLUIDOS!")
+    print("Use IfoodPollingService para polling automático")
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Servico Merchant iFood')
-    parser.add_argument('--test', action='store_true', help='Executar testes completos')
+    parser.add_argument('--test', action='store_true', help='Executar testes básicos')
     
     args = parser.parse_args()
     
     if args.test:
-        run_complete_merchant_tests()
+        run_merchant_service_tests()
