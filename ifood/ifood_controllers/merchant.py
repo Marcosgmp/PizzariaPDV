@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Body
 from typing import List
-from ifood_services.merchant import IfoodMerchantService, MerchantBasicInfo, MerchantDetails, MerchantStatus, Interruption, OpeningHours
+from ..ifood_services.merchant import IfoodMerchantService, MerchantBasicInfo, MerchantDetails, MerchantStatus, Interruption, OpeningHours
 
 router = APIRouter(prefix="/merchant", tags=["merchant"])
 
@@ -84,15 +84,22 @@ def get_merchant_interruptions(merchant_id: str):
     summary="Criar interrupção",
     description="Cria uma nova interrupção para o merchant"
 )
-def create_interruption(merchant_id: str, interruption_data: dict):
-    """
-    Create interruption - POST /merchants/{merchantId}/interruptions
-    """
-    result = merchant_service.create_interruption(merchant_id, **interruption_data)
+def create_interruption(
+    merchant_id: str,
+    description: str = Body(..., embed=True), 
+    start: str = Body(..., embed=True),    
+    end: str = Body(..., embed=True) 
+):
+    result = merchant_service.create_interruption(  
+        merchant_id=merchant_id,
+        description=description,
+        start_time=start,
+        end_time=end
+    )
     if not result:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Erro ao criar interrupção"
+            detail="Erro ao criar interrupção. Verifique os dados e tente novamente."
         )
     return result
 

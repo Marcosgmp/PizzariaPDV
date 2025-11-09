@@ -66,10 +66,8 @@ class MerchantDetails:
 class Interruption:
     id: str
     description: str
-    startTime: str
-    endTime: str
-    reason: str
-    status: str
+    start: str  
+    end: str   
 
 @dataclass
 class OpeningHours:
@@ -149,10 +147,8 @@ class IfoodMerchantService:
         return Interruption(
             id=data.get("id"),
             description=data.get("description"),
-            startTime=data.get("startTime"),
-            endTime=data.get("endTime"),
-            reason=data.get("reason"),
-            status=data.get("status")
+            start=data.get("start"),
+            end=data.get("end")
         )
     
     def test_authentication(self):
@@ -350,21 +346,27 @@ class IfoodMerchantService:
                 print(f"   {status_icon} {v.id}: {v.description}")
     
     def create_interruption(self, merchant_id: str, description: str, start_time: str, 
-        end_time: str, reason: str = "TECHNICAL_ISSUE") -> Optional[Interruption]:
+        end_time: str) -> Optional[Interruption]:
         """Cria uma interrupção no merchant - POST /merchants/{merchantId}/interruptions"""
         url = f"{self.base_url}/merchants/{merchant_id}/interruptions"
         
         payload = {
+            "id": f"interruption-{int(datetime.now().timestamp())}",
             "description": description,
-            "startTime": start_time,
-            "endTime": end_time,
-            "reason": reason
+            "start": start_time,
+            "end": end_time 
         }
+        
+        print(f"Payload com formato documentação: {payload}")
         
         try:
             headers = self._get_headers()
             print(f"Criando interrupção para merchant {merchant_id}...")
             resp = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            print(f"Status: {resp.status_code}")
+            print(f"Resposta: {resp.text}")
+            
             resp.raise_for_status()
             data = resp.json()
             
@@ -373,38 +375,12 @@ class IfoodMerchantService:
             return interruption
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 400:
-                print(f"Erro 400 ao criar interrupção: {e.response.text}")
-            else:
-                print(f"Erro HTTP {e.response.status_code}: {e.response.text}")
+            print(f"Erro HTTP {e.response.status_code}: {e.response.text}")
             return None
         except Exception as e:
             print(f"Erro ao criar interrupção: {e}")
             return None
-
-    def list_interruptions(self, merchant_id: str) -> List[Interruption]:
-        """Lista interrupções do merchant - GET /merchants/{merchantId}/interruptions"""
-        url = f"{self.base_url}/merchants/{merchant_id}/interruptions"
         
-        try:
-            headers = self._get_headers()
-            print(f"Listando interrupções do merchant {merchant_id}...")
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            interruptions = []
-            for item in data:
-                interruption = self._parse_interruption_response(item)
-                interruptions.append(interruption)
-            
-            print(f"Encontradas {len(interruptions)} interrupção(ões)")
-            return interruptions
-            
-        except Exception as e:
-            print(f"Erro ao listar interrupções: {e}")
-            return []
-
     def get_merchant_interruptions(self, merchant_id: str) -> List[Interruption]:
         """Alias para list_interruptions - para padronização com controller"""
         return self.list_interruptions(merchant_id)
